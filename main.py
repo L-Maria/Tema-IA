@@ -1,75 +1,127 @@
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.datasets import fetch_openml
+from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score
-
-# 1. Load dataset
-vowel = fetch_openml(name='vowel', version=2, as_frame=True)
-X = vowel.data
-y = vowel.target
-X = X.select_dtypes(include=[np.number])
-
-# 2. Split into train/test (optional, just for evaluation)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
-
-# 3. Define parameters
-in_bag_percentages = [0.25, 0.40, 0.60, 0.75, 0.90]
-feature_options = ['sqrt', 0.10, 0.50, 0.80, 0.90, 1.00]  # special case for 'sqrt'
-
-# 4. Function to map feature options
-def compute_max_features(option, n_features):
-    if option == 'sqrt':
-        return 'sqrt'
-    else:
-        return max(1, int(option * n_features))
-
-n_features = X_train.shape[1]
-
-# 5. Train and evaluate all combinations
-results = []
-
-for in_bag in in_bag_percentages:
-    sample_size = int(in_bag * len(X_train))
-    for feat_option in feature_options:
-        max_features = compute_max_features(feat_option, n_features)
-
-        # Bootstrap manually (simulate in-bag size)
-        idx = np.random.choice(len(X_train), size=sample_size, replace=True)
-        X_bootstrap = X_train.iloc[idx]
-        y_bootstrap = y_train.iloc[idx]
-
-        # Train Random Forest
-        clf = RandomForestClassifier(
-            n_estimators=10,
-            max_features=max_features,
-            bootstrap=True,  # default bootstrap
-            random_state=42,
-            n_jobs=-1
-        )
-        clf.fit(X_bootstrap, y_bootstrap)
-
-        # Evaluate
-        y_pred = clf.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-
-        results.append({
-            'in_bag_percentage': in_bag,
-            'feature_option': feat_option,
-            'sample_size': sample_size,
-            'max_features': max_features,
-            'accuracy': acc
-        })
-
-# 6. Save results
-results_df = pd.DataFrame(results)
-print(results_df)
+import matplotlib.pyplot as plt
+from imblearn.over_sampling import RandomOverSampler
 
 
 
-results_df.to_csv("rezultate_random_forest.csv", index=False)
-print("\nRezultatele au fost salvate în fisierul 'rezultate_random_forest.csv'.")
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# === Load and Label Data ===
+df = pd.read_csv("Data/vowel-context.data", header=None, delim_whitespace=True)
+df.columns = ['Set', 'Speaker', 'Sex'] + [f'Feature_{i}' for i in range(10)] + ['Class']
+
+# === Drop Irrelevant Columns (keep 'Set' for splitting) ===
+df = df.drop(columns=['Speaker', 'Sex'])
+
+# === Split Data Based on 'Set' Column ===
+train_df = df[df['Set'] == 0].drop(columns=['Set'])
+test_df = df[df['Set'] == 1].drop(columns=['Set'])
+
+# # === Outlier Removal Function ===
+# def remove_outliers(df):
+#     numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+#     for col in numeric_cols:
+#         Q1 = df[col].quantile(0.25)
+#         Q3 = df[col].quantile(0.75)
+#         IQR = Q3 - Q1
+#         lower = Q1 - 1.5 * IQR
+#         upper = Q3 + 1.5 * IQR
+#         df = df[(df[col] >= lower) & (df[col] <= upper)]
+#     return df
 
 
 
+
+
+
+# # === Visualize Features Before and After Outlier Removal ===
+# features = [f'Feature_{i}' for i in range(10)]
+
+# # Create a copy of the original training data before removing outliers
+# train_df_before = train_df.copy()
+# train_df_after = remove_outliers(train_df.copy())  # For visualization only
+
+# # Plot side-by-side boxplots
+# fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+
+# sns.boxplot(data=train_df_before[features], ax=axes[0], palette="Set2")
+# axes[0].set_title('Before Outlier Removal')
+# axes[0].set_ylabel('Value')
+
+# sns.boxplot(data=train_df_after[features], ax=axes[1], palette="Set2")
+# axes[1].set_title('After Outlier Removal')
+# axes[1].set_ylabel('Value')
+# axes[1].set_xticklabels(features, rotation=45)
+
+# plt.tight_layout()
+# plt.show()
+
+
+
+
+
+
+
+# === Remove Outliers Only from Training Data ===
+# train_df = remove_outliers(train_df)
+
+# === Define Features and Labels ===
+X_train = train_df.drop(columns='Class')
+y_train = train_df['Class']
+
+# === Balance the Training Data ===
+
+X_test = test_df.drop(columns='Class')
+y_test = test_df['Class']
+
+# === Define Hyperparameter Grid ===
+param_grid = {
+    'n_estimators': [10],  # fixed at 10 trees
+    'max_samples': [0.25, 0.4, 0.6, 0.75, 0.9],
+    'max_features': ['sqrt', 0.1, 0.5, 0.8, 0.9, 1.0]
+}
+
+# === Grid Search ===
+rf = RandomForestClassifier(random_state=42)
+grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, n_jobs=-1, verbose=2)
+grid_search.fit(X_train, y_train)
+
+# === Evaluate Best Model ===
+best_model = grid_search.best_estimator_
+y_pred = best_model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+
+print(f"Best Hyperparameters: {grid_search.best_params_}")
+print(f"Test Accuracy: {accuracy:.4f}")
+
+# === Plot Results ===
+scores = grid_search.cv_results_['mean_test_score']
+# Reshape the grid search results for correct plotting
+scores_matrix = scores.reshape(len(param_grid['max_samples']), len(param_grid['max_features']))
+
+plt.figure(figsize=(10, 6))
+plt.imshow(scores_matrix, cmap='viridis', interpolation='nearest')
+plt.colorbar(label='Cross-Val Accuracy')
+
+# Annotate each score on the grid
+for i, ms in enumerate(param_grid['max_samples']):
+    for j, mf in enumerate(param_grid['max_features']):
+        plt.text(j, i, f"{scores_matrix[i, j]:.3f}", ha='center', va='center', color='white')
+
+plt.title("Random Forest Accuracy (10 Trees)")
+plt.xlabel("max_features")
+plt.ylabel("max_samples")
+plt.xticks(range(len(param_grid['max_features'])), param_grid['max_features'], rotation=45)
+plt.yticks(range(len(param_grid['max_samples'])), param_grid['max_samples'])
+plt.tight_layout()
+plt.show()
+
+
+sns.countplot(x='Class', data=df)
+plt.title('Distribuția claselor (Class)')
+plt.xticks(rotation=45)
+plt.show()
